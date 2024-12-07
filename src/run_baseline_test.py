@@ -13,15 +13,6 @@ if __name__ == "__main__":
     args = get_args_parser()
     args = args.parse_args()
 
-    # args.finetune = '/Users/markbai/Downloads/checkpoint-00023.pth'
-    # args.graph_token = False
-    # args.cls_token = True
-    # args.batch_size = 1
-    # args.decoder_embed_dim = 64
-    # args.decoder_depth = 6
-    # args.model = 'graph_auto_pred_mini'
-    # args.use_conv = True
-    # args.wandb_offline = True
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     main(args)
