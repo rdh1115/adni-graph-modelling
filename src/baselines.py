@@ -11,16 +11,17 @@ import torch.nn.functional as F
 from torch_geometric.nn import (
     GCNConv, GraphConv, SAGEConv, ChebConv, GATConv,
     SGConv, GatedGraphConv,
-    global_max_pool, global_mean_pool
+    global_max_pool, global_mean_pool,
+    TopKPooling
 )
 
 from src.modules.baseline import STConv, DCRNN_Layer
 
 GRAPH_CONV_DICT = {
     'gcn': GCNConv,  # Graph Convolutional Network
-    'graphsage': SAGEConv,  # GraphSAGE
+    # 'graphsage': SAGEConv,  # GraphSAGE
     'cheb': partial(ChebConv, K=3),  # Chebyshev Convolution
-    'gat': GATConv,  # Graph Attention Network
+    # 'gat': GATConv,  # Graph Attention Network
     'sg': SGConv,  # Simplified Graph Convolution
     'graphconv': GraphConv,  # Graph Convolution (Kipf & Welling)
     'gated': GatedGraphConv,  # Gated Graph Convolution
@@ -119,7 +120,7 @@ class GCNMLP(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, data):
-        x, edge_index = data['x'], data['edge_index']
+        x, edge_index, edge_weight = data['x'], data['edge_index'], data['edge_weight']
         x_shape = x.shape
         N, T, V, D = x_shape
         if T > 1:
@@ -130,6 +131,7 @@ class GCNMLP(nn.Module):
 
         # Flatten edge_index for each graph in the batch
         edge_index = edge_index.view(2, -1)  # [2, N*E]
+        edge_weight = edge_weight.view(-1)
 
         # Shift the edge indices to account for batch-wise node indexing
         batch_offsets = torch.arange(N, device=edge_index.device) * V
@@ -142,7 +144,7 @@ class GCNMLP(nn.Module):
         # get node representations
         # shape: [N, V, D] -> [N, V, end_channel]
         for conv in self.convs:
-            x = conv(x, edge_index)
+            x = conv(x, edge_index, edge_weight)
             x = F.relu(x)
             x = self.norm(x)
             x = self.dropout_module(x)
@@ -158,6 +160,161 @@ class GCNMLP(nn.Module):
         x = self.mlp_pred_dropout(x)
         x = self.head(x)  # -> [N, T, class_prob] if pred_per_T else [N, class_prob]
         return x
+
+
+class GCNMae(nn.Module):
+    def __init__(
+            self,
+            node_feature_dim: int = 1,
+            num_nodes: int = 68,
+            mlp_pred_dropout: float = 0.1,
+            encoder_embed_dim: int = 512,
+            latent_dim: int = 512,
+            encoder_depth=3,
+            pool_ratio=0.5,
+            dropout=0.1,
+            gcn_type='gcn',
+            norm_layer=nn.LayerNorm,
+            trunc_init=True,
+            *args,
+            **kwargs,
+    ):
+        super().__init__()
+        assert gcn_type in GRAPH_CONV_DICT.keys(), f'conv_type must be one of {GRAPH_CONV_DICT.keys()}'
+        self.conv_type = gcn_type
+
+        self.num_nodes = num_nodes
+        self.node_feature_dim = node_feature_dim
+        self.encoder_embed_dim = encoder_embed_dim
+        self.latent_dim = latent_dim
+
+        self.trunc_init = trunc_init
+        self.mlp_pred_dropout = FairseqDropout(
+            mlp_pred_dropout, module_name=self.__class__.__name__
+        )
+        self.dropout_module = FairseqDropout(
+            dropout, module_name=self.__class__.__name__
+        )
+
+        graph_conv = GRAPH_CONV_DICT[gcn_type]
+        assert (latent_dim & (latent_dim - 1) == 0), 'latent_dim must be a power of 2'
+        assert (encoder_embed_dim & (encoder_embed_dim - 1) == 0), 'encoder_embed_dim must be a power of 2'
+        assert (encoder_embed_dim * num_nodes) // 2 > latent_dim, \
+            'latent_dim must be less than half of encoder_embed_dim'
+
+        # Make sure final encoder_embed_dim is bigger than latent dim
+        max_depth = math.log(encoder_embed_dim, 2)
+        while 2 ** (max_depth - encoder_depth + 1) < latent_dim:
+            encoder_depth -= 1
+        self.encoder_depth = encoder_depth
+
+        encoder_dims = [
+            (encoder_embed_dim // (2 ** i), encoder_embed_dim // (2 ** (i + 1)))
+            for i in range(encoder_depth - 1)
+        ]
+        encoder_dims = [(node_feature_dim, encoder_embed_dim)] + encoder_dims
+        self.convs = torch.nn.ModuleList([
+            graph_conv(encoder_dims[i][0], encoder_dims[i][1])
+            for i in range(encoder_depth)
+        ])
+        encoder_final_dim = encoder_dims[-1][-1]
+
+        self.pool_ratio = pool_ratio
+        self.pooling = TopKPooling(encoder_dims[-1][-1], ratio=pool_ratio)
+        seq_dim = encoder_final_dim * math.ceil(num_nodes * pool_ratio)
+        self.head = nn.Linear(seq_dim, latent_dim)
+        self.norm = norm_layer(latent_dim)
+
+        output_dim = node_feature_dim * num_nodes
+        self.decoder_head = nn.Linear(latent_dim, output_dim)
+        self.decoder_norm = norm_layer(output_dim)
+        self.decoder_convs = torch.nn.ModuleList([
+            graph_conv(node_feature_dim, node_feature_dim)
+            for _ in range(math.floor(encoder_depth // 2))
+        ])
+        self.initialize_weights()
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return dict()
+
+    def initialize_weights(self):
+        # initialize nn.Linear and nn.LayerNorm
+        for conv in self.convs:
+            conv.reset_parameters()
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            # we use xavier_uniform following official JAX ViT:
+            if self.trunc_init:
+                nn.init.trunc_normal_(m.weight, std=0.02)
+            else:
+                torch.nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+        elif isinstance(m, nn.BatchNorm2d):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+        elif isinstance(m, nn.Conv2d):
+            if self.trunc_init:
+                nn.init.trunc_normal_(m.weight, std=0.02)
+            else:
+                torch.nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, data):
+        x, edge_index, edge_weight = data['x'], data['edge_index'], data['edge_attr']
+        x_shape = x.shape
+        N, T, V, D = x_shape
+        if T > 1:
+            raise ValueError('GNN only supports 1 time step')
+
+        # Flatten the batch dimension, so x becomes [N*V, D]
+        x = x.view(N * V, D)
+
+        # Flatten edge_index for each graph in the batch
+        edge_index = edge_index.view(2, -1)  # [2, N*E]
+        edge_weight = edge_weight.view(-1)
+
+        # Shift the edge indices to account for batch-wise node indexing
+        batch_offsets = torch.arange(N, device=edge_index.device) * V
+        edge_index[0] += torch.repeat_interleave(batch_offsets, edge_index.size(1) // N)
+        edge_index[1] += torch.repeat_interleave(batch_offsets, edge_index.size(1) // N)
+
+        # Create a batch tensor indicating the graph each node belongs to
+        batch = torch.repeat_interleave(torch.arange(N, device=x.device), V)
+
+        # get node representations
+        # shape: [N, V, D] -> [N, V, end_channel]
+        for conv in self.convs:
+            x = conv(x, edge_index, edge_weight)
+            x = F.relu(x)
+            x = self.dropout_module(x)
+
+        x, _, _, _, _, _ = self.pooling(x, edge_index, edge_weight, batch)
+        x = x.contiguous().view(N, -1)
+        x = self.head(x)
+        x = self.norm(x)
+
+        x = F.relu(self.decoder_head(x))
+        x = self.decoder_norm(x)
+        x = x.view(N, V, D)
+        for conv in self.decoder_convs:
+            x = conv(x, edge_index, edge_weight)
+            x = F.relu(x)
+        return x.view(N, -1)
+
+    def forward_loss(self, data, criterion=torch.nn.MSELoss()):
+        x = self.forward(data)
+        y = data['x']
+        N, T, V, D = y.shape
+        loss = criterion(x, y.view(N, -1))
+        return loss
 
 
 class TimeSeriesPred(nn.Module):
