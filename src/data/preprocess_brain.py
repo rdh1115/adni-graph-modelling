@@ -168,13 +168,13 @@ def get_raw_data_brain(
     class_init_prob = None
     scaler = None
 
-    if norm and filter_list[0] == 1:  # only normalize MRI scans, PET is alreayd normalized
+    if norm and filter_list[0] == 1:  # only normalize MRI scans, PET is already normalized
         tmp = list()
         # concat across subjects and normalize each vertex
         for rid, d in X_s[0].items():
             tmp.append(d['arr'])
-        tmp = np.nan_to_num(np.concatenate(tmp, axis=0))[..., :2]
-        data_min, data_max = tmp.min(axis=(0, 1)), tmp.max(axis=(0, 1))
+        tmp = np.nan_to_num(np.concatenate(tmp, axis=0))[..., 0]
+        data_min, data_max = tmp.min(axis=0), tmp.max(axis=0)
         scaler = MinMaxScaler(np.array(data_min), np.array(data_max))
         # norm = False
         del tmp
@@ -182,12 +182,13 @@ def get_raw_data_brain(
     for i, x in enumerate(X_s):
         for rid, d in x.items():  # iterate over all subjects
             if norm and filter_list[0] == 1:
-                d['arr'][..., :2] = scaler.transform(d['arr'][..., :2])
+                d['arr'][..., 0] = scaler.transform(d['arr'][..., 0])
 
             if i == 0 and task == 'class':
                 # all historical scans have the same labels
                 # labels.append(max([DX_DICT[dx] for dx in d['DX']]))  # only the worst diagnosis is used,
-                labels.append([DX_DICT[dx] for dx in d['DX']][-1])  # only the last diagnosis is used
+                labels.append(
+                    [DX_DICT[dx] for dx in d['DX']][-1])  # only the last diagnosis is used, label is mostly same
             # if task == 'class':
             # if d['visits'] > n_hist:
             # only keep first and last + evenly spaced out middle indices
@@ -211,10 +212,10 @@ def get_raw_data_brain(
         if task == 'pred':
             targets = np.nan_to_num(np.concatenate([arr[1] for arr in subject_X.values()]))
         elif task == 'class':
-            targets = np.concatenate([
-                [
-                    [max([DX_DICT[dx] for dx in x[rid]['DX']])] for _ in arr[0]
-                ] for rid, arr in subject_X.items()
+            targets = np.hstack([
+                # [max([DX_DICT[dx] for dx in x[rid]['DX']]) for _ in arr[0]]
+                [[DX_DICT[dx] for dx in x[rid]['DX']][-1] for _ in arr[0]]
+                for rid, arr in subject_X.items()
             ])
         else:
             raise ValueError(f'Unknown task: {task}')

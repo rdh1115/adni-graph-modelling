@@ -11,7 +11,7 @@ class MyTestCase(unittest.TestCase):
         n_hist, n_pred, num_visits = 1, 0, 1
         filter_list = (1, 1, 1)
         filter_diagnosis, include_pet_volume = False, False
-        norm = False
+        norm = True
         graph_token = False
         dataset_dir = ''
         dataset_args = {

@@ -49,7 +49,7 @@ def load_sc(data_dir=None):
     ctxL = 'strucLabels_with_sctx.csv'
     ctxL_ipth = os.path.join(data_dir, 'Connectivity', ctxL)
 
-    return np.loadtxt(ctx_ipth, dtype=np.float_, delimiter=','), \
+    return np.loadtxt(ctx_ipth, dtype=np.float64, delimiter=','), \
         np.loadtxt(ctxL_ipth, dtype='str', delimiter=',')
 
 

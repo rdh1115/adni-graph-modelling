@@ -8,7 +8,7 @@ def generate_subject_info(df, add_feature_keys=None):
     subject_info = {rid: dict() for rid in df['RID'].unique()}
     if add_feature_keys is None:
         add_feature_keys = [
-            'VISCODE', 'DX_CHANGE_NEW', 'APOE4', 'DX_bl', 'DX', 'AGE', 'PTGENDER', 'PTEDUCAT',
+            'VISCODE', 'DXCHANGE_NEW', 'APOE4', 'DX_bl', 'DX', 'AGE', 'PTGENDER', 'PTEDUCAT',
             'MMSE', 'MOCA',
             'ADAS11', 'ADAS13', 'ADASQ4',
             'RAVLT_immediate', 'RAVLT_learning', 'RAVLT_forgetting', 'RAVLT_perc_forgetting',
@@ -32,9 +32,9 @@ def extract_values(tmp, index, take_all=False):
     if any(not isinstance(roi[index], str) for roi in tmp):
         return np.nan_to_num(np.array([[roi[index]] for roi in tmp]))
     if take_all:
-        return np.array([np.array(roi[index][1:-1].split(), dtype=np.float_) for roi in tmp])
+        return np.array([np.array(roi[index][1:-1].split(), dtype=np.float64) for roi in tmp])
     else:
-        return np.array([np.array(roi[index][1:-1].split()[:1], dtype=np.float_) for roi in tmp])
+        return np.array([np.array(roi[index][1:-1].split()[:1], dtype=np.float64) for roi in tmp])
 
 
 def concat_time(subject_df, indices, filter_mri, filter_ab, filter_tau, include_pet_volume):
@@ -49,12 +49,12 @@ def concat_time(subject_df, indices, filter_mri, filter_ab, filter_tau, include_
             D = int(2 * filter_ab + 2 * filter_tau)
         else:
             D = int(filter_ab + filter_tau)
-    info = np.empty((T, V, D), np.float_)
+    info = np.empty((T, V, D), np.float64)
 
     for r in range(T):
         row = subject_df.iloc[r]
         tmp = [row.iloc[idx].to_numpy() for idx in indices]
-        tmp_arr = np.empty((V, D), np.float_)
+        tmp_arr = np.empty((V, D), np.float64)
 
         col_idx = 0
         if filter_mri:
