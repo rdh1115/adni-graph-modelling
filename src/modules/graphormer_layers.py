@@ -3,7 +3,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from fairseq import utils
+
 from typing import Union, Optional, Callable
 
 
@@ -22,7 +22,6 @@ class Conv2D(nn.Module):
         stride (tuple or list, optional): Convolution strides, default (1,1).
         use_bias (bool, optional): Whether to use bias, default is True.
         activation (Callable, optional): Activation function, default is torch.nn.functional.gelu.
-        bn_decay (float, optional): Batch normalization momentum, default is None.
     """
 
     def __init__(
@@ -133,8 +132,8 @@ class GraphNodeFeature(nn.Module):
         self.num_nodes = num_nodes
         self.start_conv = start_conv
         self.centrality_encoding = centrality_encoding
-        act_function = utils.get_activation_fn(act_fn)
-        self.activation = act_function() if act_fn == 'swish' else act_function
+
+        self.activation = nn.GELU() if act_fn == 'gelu' else nn.ReLU()
         if self.start_conv:  # convert to hidden_dim
             if old_config:
                 self.fc = FC(

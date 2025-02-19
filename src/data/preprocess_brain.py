@@ -168,7 +168,7 @@ def get_raw_data_brain(
     class_init_prob = None
     scaler = None
 
-    if norm and filter_list[0] == 1:  # only normalize MRI scans
+    if norm and filter_list[0] == 1:  # only normalize MRI scans, PET is alreayd normalized
         tmp = list()
         # concat across subjects and normalize each vertex
         for rid, d in X_s[0].items():
@@ -185,9 +185,9 @@ def get_raw_data_brain(
                 d['arr'][..., :2] = scaler.transform(d['arr'][..., :2])
 
             if i == 0 and task == 'class':
-                # only the worst diagnosis is used,
-                # i.e. all historical scans have the same labels
-                labels.append(max([DX_DICT[dx] for dx in d['DX']]))
+                # all historical scans have the same labels
+                # labels.append(max([DX_DICT[dx] for dx in d['DX']]))  # only the worst diagnosis is used,
+                labels.append([DX_DICT[dx] for dx in d['DX']][-1])  # only the last diagnosis is used
             # if task == 'class':
             # if d['visits'] > n_hist:
             # only keep first and last + evenly spaced out middle indices

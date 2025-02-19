@@ -2,11 +2,8 @@ import math
 from typing import Optional, Tuple
 
 import torch
-from fairseq import utils
-from fairseq.modules.fairseq_dropout import FairseqDropout
-from fairseq.modules.quant_noise import quant_noise
 from torch import Tensor, nn
-
+from torch.nn import functional as F
 
 class MultiheadAttention(nn.Module):
     """Multi-headed attention.
@@ -23,8 +20,6 @@ class MultiheadAttention(nn.Module):
         dropout=0.0,
         bias=True,
         self_attention=False,
-        q_noise=0.0,
-        qn_block_size=8,
     ):
         super().__init__()
         self.embed_dim = embed_dim
@@ -33,9 +28,7 @@ class MultiheadAttention(nn.Module):
         self.qkv_same_dim = self.kdim == embed_dim and self.vdim == embed_dim
 
         self.num_heads = num_heads
-        self.dropout_module = FairseqDropout(
-            dropout, module_name=self.__class__.__name__
-        )
+        self.dropout_module = nn.Dropout(dropout)
 
         self.head_dim = embed_dim // num_heads
         assert (
@@ -51,26 +44,13 @@ class MultiheadAttention(nn.Module):
             "Self-attention requires query, key and " "value to be of the same size"
         )
 
-        self.k_proj = quant_noise(
-            nn.Linear(self.kdim, embed_dim, bias=bias), q_noise, qn_block_size
-        )
-        self.v_proj = quant_noise(
-            nn.Linear(self.vdim, embed_dim, bias=bias), q_noise, qn_block_size
-        )
-        self.q_proj = quant_noise(
-            nn.Linear(embed_dim, embed_dim, bias=bias), q_noise, qn_block_size
-        )
+        self.k_proj = nn.Linear(self.kdim, embed_dim, bias=bias)
+        self.v_proj = nn.Linear(self.vdim, embed_dim, bias=bias)
+        self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
 
-        self.out_proj = quant_noise(
-            nn.Linear(embed_dim, embed_dim, bias=bias), q_noise, qn_block_size
-        )
-
+        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
         self.reset_parameters()
 
-        self.onnx_trace = False
-
-    def prepare_for_onnx_export_(self):
-        raise NotImplementedError
 
     def reset_parameters(self):
         if self.qkv_same_dim:
@@ -189,8 +169,8 @@ class MultiheadAttention(nn.Module):
         if before_softmax:
             return attn_weights, v
 
-        attn_weights_float = utils.softmax(
-            attn_weights, dim=-1, onnx_trace=self.onnx_trace
+        attn_weights_float = F.softmax(
+            attn_weights, dim=-1
         )
         attn_weights = attn_weights_float.type_as(attn_weights)
         attn_probs = self.dropout_module(attn_weights)

@@ -4,29 +4,12 @@ from typing import Optional, Tuple, Union, List, Any
 
 import torch
 import torch.nn as nn
-from fairseq.modules import FairseqDropout, LayerDropModuleList, LayerNorm
-from fairseq.modules.quant_noise import quant_noise as apply_quant_noise_
 from torch import Tensor
+from torch.nn import LayerNorm
 
 from src.modules.multihead_attention import MultiheadAttention
 from src.modules.graphormer_layers import GraphNodeFeature, GraphAttnBias
 from src.modules.graphormer_graph_encoder_layer import GraphormerGraphEncoderLayer
-
-
-def init_graphormer_params(module):
-    """
-    Initialize the weights specific to the Graphormer Model.
-    """
-
-    def normal_(data):
-        # with FSDP, module params will be on CUDA, so we cast them back to CPU
-        # so that the RNG is consistent with and without FSDP
-        data.copy_(data.cpu().normal_(mean=0.0, std=0.02).to(data.device))
-
-    if isinstance(module, MultiheadAttention):
-        normal_(module.q_proj.weight.data)
-        normal_(module.k_proj.weight.data)
-        normal_(module.v_proj.weight.data)
 
 
 class GraphormerGraphEncoder(nn.Module):
@@ -58,7 +41,6 @@ class GraphormerGraphEncoder(nn.Module):
             dropout: float = 0.1,
             attention_dropout: float = 0.1,
             activation_dropout: float = 0.1,
-            layerdrop: float = 0.0,
             encoder_normalize_before: bool = True,
             pre_layernorm: bool = True,
             apply_graphormer_init: bool = False,
@@ -68,18 +50,13 @@ class GraphormerGraphEncoder(nn.Module):
             n_trans_layers_to_freeze: int = 0,
             export: bool = False,
             traceable: bool = False,
-            q_noise: float = 0.0,
-            qn_block_size: int = 8,
     ) -> None:
 
         super().__init__()
         self.static_graph = static_graph
         self.graph_token = graph_token
 
-        self.dropout_module = FairseqDropout(
-            dropout, module_name=self.__class__.__name__
-        )
-        self.layerdrop = layerdrop
+        self.dropout_module = nn.Dropout(dropout)
         self.embedding_dim = embedding_dim
         self.embed_scale = embed_scale
         self.traceable = traceable
@@ -114,46 +91,28 @@ class GraphormerGraphEncoder(nn.Module):
                 edge_features=edge_features
             )
 
-        if q_noise > 0:
-            self.quant_noise = apply_quant_noise_(
-                nn.Linear(self.embedding_dim, self.embedding_dim, bias=False),
-                q_noise,
-                qn_block_size,
-            )
-        else:
-            self.quant_noise = None
-
         if encoder_normalize_before:
-            self.emb_layer_norm = LayerNorm(self.embedding_dim, export=export)
+            self.emb_layer_norm = LayerNorm(self.embedding_dim, eps=1e-8)
         else:
             self.emb_layer_norm = None
 
-        if self.layerdrop > 0.0:
-            self.layers = LayerDropModuleList(p=self.layerdrop)
-        else:
-            self.layers = nn.ModuleList([])
+        self.layers = nn.ModuleList([])
         self.layers.extend(
             [
-                self.build_graphormer_graph_encoder_layer(
-                    embedding_dim=self.embedding_dim,
+                GraphormerGraphEncoderLayer(
+                    embedding_dim=embedding_dim,
                     ffn_embedding_dim=ffn_embedding_dim,
                     num_attention_heads=num_attention_heads,
-                    dropout=self.dropout_module.p,
+                    dropout=dropout,
                     attention_dropout=attention_dropout,
                     activation_dropout=activation_dropout,
                     activation_fn=activation_fn,
                     export=export,
-                    q_noise=q_noise,
-                    qn_block_size=qn_block_size,
                     pre_layernorm=pre_layernorm,
                 )
                 for _ in range(num_encoder_layers)
             ]
         )
-
-        # Apply initialization of model params after building the model
-        if self.apply_graphormer_init:
-            self.apply(init_graphormer_params)
 
         def freeze_module_params(m):
             if m is not None:
@@ -165,34 +124,6 @@ class GraphormerGraphEncoder(nn.Module):
 
         for layer in range(n_trans_layers_to_freeze):
             freeze_module_params(self.layers[layer])
-
-    def build_graphormer_graph_encoder_layer(
-            self,
-            embedding_dim,
-            ffn_embedding_dim,
-            num_attention_heads,
-            dropout,
-            attention_dropout,
-            activation_dropout,
-            activation_fn,
-            export,
-            q_noise,
-            qn_block_size,
-            pre_layernorm,
-    ):
-        return GraphormerGraphEncoderLayer(
-            embedding_dim=embedding_dim,
-            ffn_embedding_dim=ffn_embedding_dim,
-            num_attention_heads=num_attention_heads,
-            dropout=dropout,
-            attention_dropout=attention_dropout,
-            activation_dropout=activation_dropout,
-            activation_fn=activation_fn,
-            export=export,
-            q_noise=q_noise,
-            qn_block_size=qn_block_size,
-            pre_layernorm=pre_layernorm,
-        )
 
     def compute_attn_bias(self, batched_data):
         attn_bias = self.graph_attn_bias(batched_data)
@@ -267,7 +198,7 @@ class GraphormerGraphEncoder(nn.Module):
         B, T, D = x.shape
 
         padding_mask = None
-        # what's the point of adding graph token mask??
+        # what's the point of adding graph token mask? we want to attend to special tokens
         # padding_mask = (x[:, :, 0]).eq(0)  # B x T x 1
         # bug in the original code corrected below:
         # padding_mask = torch.all(x[:,:,].eq(0), dim=-1)
@@ -285,8 +216,6 @@ class GraphormerGraphEncoder(nn.Module):
 
         if self.embed_scale is not None:
             x = x * self.embed_scale
-        if self.quant_noise is not None:
-            x = self.quant_noise(x)
         if self.emb_layer_norm is not None:
             x = self.emb_layer_norm(x)
         x = self.dropout_module(x)

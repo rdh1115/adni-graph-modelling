@@ -4,8 +4,6 @@ from typing import List
 
 import torch
 import torch.nn as nn
-from fairseq.modules import FairseqDropout
-from fairseq import utils
 
 import torch.nn.functional as F
 from torch_geometric.nn import (
@@ -65,12 +63,8 @@ class GCNMLP(nn.Module):
         self.encoder_embed_dim = encoder_embed_dim
         self.trunc_init = trunc_init
         self.norm = norm_layer(encoder_embed_dim)
-        self.mlp_pred_dropout = FairseqDropout(
-            mlp_pred_dropout, module_name=self.__class__.__name__
-        )
-        self.dropout_module = FairseqDropout(
-            dropout, module_name=self.__class__.__name__
-        )
+        self.mlp_pred_dropout = nn.Dropout(mlp_pred_dropout)
+        self.dropout_module = nn.Dropout(dropout)
         self.head = nn.Linear(self.encoder_embed_dim, pred_num_classes)
 
         graph_conv = GRAPH_CONV_DICT[gcn_type]
@@ -189,12 +183,8 @@ class GCNMae(nn.Module):
         self.latent_dim = latent_dim
 
         self.trunc_init = trunc_init
-        self.mlp_pred_dropout = FairseqDropout(
-            mlp_pred_dropout, module_name=self.__class__.__name__
-        )
-        self.dropout_module = FairseqDropout(
-            dropout, module_name=self.__class__.__name__
-        )
+        self.mlp_pred_dropout = nn.Dropout(mlp_pred_dropout)
+        self.dropout_module = nn.Dropout(dropout)
 
         graph_conv = GRAPH_CONV_DICT[gcn_type]
         assert (latent_dim & (latent_dim - 1) == 0), 'latent_dim must be a power of 2'
@@ -346,8 +336,7 @@ class TimeSeriesPred(nn.Module):
         self.encoder_embed_dim = encoder_embed_dim
         self.mlp_pred_dropout = mlp_pred_dropout
 
-        act_function = utils.get_activation_fn(act_fn)
-        self.activation = act_function() if act_fn == 'swish' else act_function
+        self.activation = nn.GELU() if act_fn == 'gelu' else nn.ReLU()
         self.norm = norm_layer(encoder_embed_dim)
         if self.n_pred > self.hist_t_dim:
             self.fc_project = nn.Linear(
@@ -355,7 +344,7 @@ class TimeSeriesPred(nn.Module):
                 self.n_pred * end_channel
             )
             if batch_norm:
-                self.layer_norm = nn.LayerNorm(end_channel)
+                self.layer_norm = nn.LayerNorm(end_channel, eps=1e-8)
             self.end_conv_2 = nn.Conv2d(
                 in_channels=end_channel,
                 out_channels=self.pred_node_dim,
@@ -465,9 +454,7 @@ class DCRNN(TimeSeriesPred):
             )
             for i in range(encoder_depth)
         ])
-        self.dropout_module = FairseqDropout(
-            dropout, module_name=self.__class__.__name__
-        )
+        self.dropout_module = nn.Dropout(dropout)
         self.initialize_weights()
 
     @torch.jit.ignore
@@ -516,9 +503,7 @@ class STGCN(TimeSeriesPred):
     ):
         super().__init__(*args, **kwargs)
         self.trunc_init = trunc_init
-        self.dropout_module = FairseqDropout(
-            dropout, module_name=self.__class__.__name__
-        )
+        self.dropout_module = nn.Dropout(dropout)
         self.stconv_layers = nn.ModuleList([
             STConv(
                 num_nodes=self.num_nodes,

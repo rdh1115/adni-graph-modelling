@@ -2,8 +2,6 @@ import math
 from functools import partial
 from typing import List
 
-from fairseq import utils
-from fairseq.modules import FairseqDropout
 from src.modules import graphormer_graph_encoder
 from src.utils.log import master_print as print
 
@@ -456,9 +454,7 @@ class GraphEncoderMLP(GraphEncoder):
         assert math.isclose(sum(class_init_prob), 1.0), 'class probabilities must sum to 1'
         self.max_pooling = max_pooling
         self.pred_per_time_step = pred_per_time_step
-        self.mlp_pred_dropout = FairseqDropout(
-            mlp_pred_dropout, module_name=self.__class__.__name__
-        )
+        self.mlp_pred_dropout = nn.Dropout(mlp_pred_dropout)
         self.head = nn.Linear(self.encoder_embed_dim, pred_num_classes)
 
         self.initialize_weights()
@@ -512,8 +508,7 @@ class GraphEncoderPred(GraphEncoder):
         self.n_pred = n_pred
         self.end_channel = end_channel
         self.use_conv = use_conv
-        act_function = utils.get_activation_fn(self.act_fn)
-        self.activation = act_function() if self.act_fn == 'swish' else act_function
+        self.activation = nn.GELU() if self.act_fn == 'gelu' else nn.ReLU()
         old_config = kwargs.get('old_config', False)
 
         if self.n_pred > self.hist_t_dim:
@@ -522,7 +517,7 @@ class GraphEncoderPred(GraphEncoder):
                 self.n_pred * end_channel
             )
             if batch_norm:
-                self.layer_norm = nn.LayerNorm(end_channel)
+                self.layer_norm = nn.LayerNorm(end_channel, eps=1e-8)
             self.end_conv_2 = nn.Conv2d(
                 in_channels=end_channel,
                 out_channels=self.pred_node_dim,
@@ -566,9 +561,7 @@ class GraphEncoderPred(GraphEncoder):
                 #     self.pred_node_dim
                 # )
                 self.fc_channel = nn.Linear(self.encoder_embed_dim, self.pred_node_dim)
-                self.mlp_pred_dropout = FairseqDropout(
-                    mlp_pred_dropout, module_name=self.__class__.__name__
-                )
+                self.mlp_pred_dropout = nn.Dropout(mlp_pred_dropout)
                 self.fc_his = nn.Linear(
                     self.hist_t_dim,
                     self.n_pred
@@ -653,8 +646,7 @@ class GraphEncoderCausalPred(GraphEncoder):
         self.n_pred = n_pred
         self.end_channel = end_channel
         self.use_conv = use_conv
-        act_function = utils.get_activation_fn(self.act_fn)
-        self.activation = act_function() if self.act_fn == 'swish' else act_function
+        self.activation = nn.GELU() if self.act_fn == 'gelu' else nn.ReLU()
         if not use_conv:
             raise ValueError('graph_causal_pred has to have --use_conv')
 
@@ -674,7 +666,7 @@ class GraphEncoderCausalPred(GraphEncoder):
                 self.n_pred * (end_channel // 2)
             )
             if batch_norm:
-                self.layer_norm = nn.LayerNorm(end_channel // 2)
+                self.layer_norm = nn.LayerNorm(end_channel // 2, eps=1e-8)
             self.end_conv_2 = nn.Conv2d(
                 in_channels=(end_channel // 2),
                 out_channels=self.pred_node_dim,
@@ -789,50 +781,6 @@ def graph_mlp_small(**kwargs):
     return model
 
 
-# def graph_mlp_med(**kwargs):
-#     model = GraphEncoderMLP(
-#         encoder_embed_dim=384,
-#         encoder_depth=10,
-#         num_heads=8,
-#         norm_layer=partial(nn.LayerNorm, eps=1e-8),
-#         **kwargs,
-#     )
-#     return model
-#
-#
-# def graph_mlp_big(**kwargs):
-#     model = GraphEncoderMLP(
-#         encoder_embed_dim=768,
-#         encoder_depth=12,
-#         num_heads=12,
-#         norm_layer=partial(nn.LayerNorm, eps=1e-8),
-#         **kwargs,
-#     )
-#     return model
-#
-#
-# def graph_mlp_large(**kwargs):
-#     model = GraphEncoderMLP(
-#         encoder_embed_dim=1024,
-#         encoder_depth=24,
-#         num_heads=16,
-#         norm_layer=partial(nn.LayerNorm, eps=1e-8),
-#         **kwargs,
-#     )
-#     return model
-#
-#
-# def graph_mlp_xl(**kwargs):
-#     model = GraphEncoderMLP(
-#         encoder_embed_dim=1280,
-#         encoder_depth=32,
-#         num_heads=16,
-#         norm_layer=partial(nn.LayerNorm, eps=1e-8),
-#         **kwargs,
-#     )
-#     return model
-
-
 def graph_pred_micro(**kwargs):
     model = GraphEncoderPred(
         encoder_embed_dim=64,
@@ -866,50 +814,6 @@ def graph_pred_small(**kwargs):
     return model
 
 
-# def graph_pred_med(**kwargs):
-#     model = GraphEncoderPred(
-#         encoder_embed_dim=384,
-#         encoder_depth=10,
-#         num_heads=8,
-#         norm_layer=partial(nn.LayerNorm, eps=1e-8),
-#         **kwargs,
-#     )
-#     return model
-#
-#
-# def graph_pred_big(**kwargs):
-#     model = GraphEncoderPred(
-#         encoder_embed_dim=768,
-#         encoder_depth=12,
-#         num_heads=12,
-#         norm_layer=partial(nn.LayerNorm, eps=1e-8),
-#         **kwargs,
-#     )
-#     return model
-#
-#
-# def graph_pred_large(**kwargs):
-#     model = GraphEncoderPred(
-#         encoder_embed_dim=1024,
-#         encoder_depth=24,
-#         num_heads=16,
-#         norm_layer=partial(nn.LayerNorm, eps=1e-8),
-#         **kwargs,
-#     )
-#     return model
-#
-#
-# def graph_pred_xl(**kwargs):
-#     model = GraphEncoderPred(
-#         encoder_embed_dim=1280,
-#         encoder_depth=32,
-#         num_heads=16,
-#         norm_layer=partial(nn.LayerNorm, eps=1e-8),
-#         **kwargs,
-#     )
-#     return model
-
-
 def graph_causal_pred_micro(**kwargs):
     model = GraphEncoderCausalPred(
         encoder_embed_dim=64,
@@ -941,7 +845,6 @@ def graph_causal_pred_small(**kwargs):
         **kwargs,
     )
     return model
-
 
 # def graph_causal_pred_med(**kwargs):
 #     model = GraphEncoderCausalPred(

@@ -106,7 +106,7 @@ class GMAEParser(argparse.ArgumentParser):
             default="gelu",
             type=str,
             help="activation function",
-            choices=["relu", "gelu", "swish", 'tanh'],
+            choices=["relu", "gelu"],
         )
         self.add_argument(
             "--sep_pos_embed",

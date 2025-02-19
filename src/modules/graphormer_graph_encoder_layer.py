@@ -4,11 +4,7 @@ from typing import Callable, Optional
 
 import torch
 import torch.nn as nn
-from fairseq import utils
-from fairseq.modules import LayerNorm
-from fairseq.modules.fairseq_dropout import FairseqDropout
-from fairseq.modules.quant_noise import quant_noise
-
+from torch.nn import LayerNorm
 from src.modules.multihead_attention import MultiheadAttention
 
 
@@ -23,8 +19,6 @@ class GraphormerGraphEncoderLayer(nn.Module):
             activation_dropout: float = 0.1,
             activation_fn: str = "gelu",
             export: bool = False,
-            q_noise: float = 0.0,
-            qn_block_size: int = 8,
             init_fn: Callable = None,
             pre_layernorm: bool = True,
     ) -> None:
@@ -37,71 +31,28 @@ class GraphormerGraphEncoderLayer(nn.Module):
         self.embedding_dim = embedding_dim
         self.num_attention_heads = num_attention_heads
         self.attention_dropout = attention_dropout
-        self.q_noise = q_noise
-        self.qn_block_size = qn_block_size
         self.pre_layernorm = pre_layernorm
 
-        self.dropout_module = FairseqDropout(
-            dropout, module_name=self.__class__.__name__
-        )
-        self.activation_dropout_module = FairseqDropout(
-            activation_dropout, module_name=self.__class__.__name__
-        )
+        self.dropout_module = nn.Dropout(dropout)
+        self.activation_dropout_module = nn.Dropout(activation_dropout)
 
-        # Initialize blocks
-        act_function = utils.get_activation_fn(activation_fn)
-        self.activation_fn = act_function() if activation_fn == 'swish' else act_function
-        self.self_attn = self.build_self_attention(
+        self.activation_fn = nn.GELU() if activation_fn == "gelu" else nn.ReLU()
+
+        self.self_attn = MultiheadAttention(
             self.embedding_dim,
             num_attention_heads,
             dropout=attention_dropout,
             self_attention=True,
-            q_noise=q_noise,
-            qn_block_size=qn_block_size,
         )
 
         # layer norm associated with the self attention layer
-        self.self_attn_layer_norm = LayerNorm(self.embedding_dim, export=export)
+        self.self_attn_layer_norm = LayerNorm(self.embedding_dim, eps=1e-8)
 
-        self.fc1 = self.build_fc1(
-            self.embedding_dim,
-            ffn_embedding_dim,
-            q_noise=q_noise,
-            qn_block_size=qn_block_size,
-        )
-        self.fc2 = self.build_fc2(
-            ffn_embedding_dim,
-            self.embedding_dim,
-            q_noise=q_noise,
-            qn_block_size=qn_block_size,
-        )
+        self.fc1 = nn.Linear(self.embedding_dim, ffn_embedding_dim)
+        self.fc2 = nn.Linear(ffn_embedding_dim, self.embedding_dim)
 
         # layer norm associated with the position wise feed-forward NN
-        self.final_layer_norm = LayerNorm(self.embedding_dim, export=export)
-
-    def build_fc1(self, input_dim, output_dim, q_noise, qn_block_size):
-        return quant_noise(nn.Linear(input_dim, output_dim), q_noise, qn_block_size)
-
-    def build_fc2(self, input_dim, output_dim, q_noise, qn_block_size):
-        return quant_noise(nn.Linear(input_dim, output_dim), q_noise, qn_block_size)
-
-    def build_self_attention(
-            self,
-            embed_dim,
-            num_attention_heads,
-            dropout,
-            self_attention,
-            q_noise,
-            qn_block_size,
-    ):
-        return MultiheadAttention(
-            embed_dim,
-            num_attention_heads,
-            dropout=dropout,
-            self_attention=True,
-            q_noise=q_noise,
-            qn_block_size=qn_block_size,
-        )
+        self.final_layer_norm = LayerNorm(self.embedding_dim, eps=1e-8)
 
     def forward(
             self,

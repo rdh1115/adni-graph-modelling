@@ -1,8 +1,6 @@
 import math
 from functools import partial
 
-from fairseq import utils
-
 import torch
 import torch.nn as nn
 from torch_geometric.nn import TopKPooling
@@ -72,8 +70,7 @@ class MaskedGraphAutoEncoder(nn.Module):
         self.attention_bias = attention_bias
         self.centrality_encoding = centrality_encoding
         self.act_fn = act_fn
-        act_function = utils.get_activation_fn(self.act_fn)
-        self.activation = act_function() if self.act_fn == 'swish' else act_function
+        self.activation = nn.GELU() if act_fn == 'gelu' else nn.ReLU()
 
         # encoder inits
         if self.graph_token:
@@ -782,8 +779,7 @@ class GraphAutoEncoder(GraphEncoder):
         self.attention_bias = attention_bias
         self.centrality_encoding = centrality_encoding
         self.act_fn = act_fn
-        act_function = utils.get_activation_fn(self.act_fn)
-        self.activation = act_function() if self.act_fn == 'swish' else act_function
+        self.activation = nn.GELU() if act_fn == 'gelu' else nn.ReLU()
 
         # encoder inits
         if self.graph_token:

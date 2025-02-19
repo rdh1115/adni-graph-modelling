@@ -4,15 +4,21 @@ import argparse
 import os
 
 
-def generate_subject_info(df):
+def generate_subject_info(df, add_feature_keys=None):
     subject_info = {rid: dict() for rid in df['RID'].unique()}
+    if add_feature_keys is None:
+        add_feature_keys = [
+            'VISCODE', 'DX_CHANGE_NEW', 'APOE4', 'DX_bl', 'DX', 'AGE', 'PTGENDER', 'PTEDUCAT',
+            'MMSE', 'MOCA',
+            'ADAS11', 'ADAS13', 'ADASQ4',
+            'RAVLT_immediate', 'RAVLT_learning', 'RAVLT_forgetting', 'RAVLT_perc_forgetting',
+            'EcogPtTotal', 'EcogSPTotal'
+        ]
     for rid in subject_info:
         sub_df = df[df['RID'] == rid]
         subject_info[rid]['viscode'] = list(sub_df['VISCODE'])
-        subject_info[rid]['DX_CHANGE'] = list(sub_df['DXCHANGE_NEW'])
-        subject_info[rid]['APOE4'] = list(sub_df['APOE4'])
-        subject_info[rid]['DX_bl'] = list(sub_df['DX_bl'])
-        subject_info[rid]['DX'] = list(sub_df['DX'])
+        for key in add_feature_keys:
+            subject_info[rid][key] = list(sub_df[key])
     return subject_info
 
 
@@ -21,24 +27,28 @@ def get_roi_indices(header, roi_labels):
             for roi in roi_labels}
 
 
+def extract_values(tmp, index, take_all=False):
+    """Extracts values from the given index in tmp, handling string conversion."""
+    if any(not isinstance(roi[index], str) for roi in tmp):
+        return np.nan_to_num(np.array([[roi[index]] for roi in tmp]))
+    if take_all:
+        return np.array([np.array(roi[index][1:-1].split(), dtype=np.float_) for roi in tmp])
+    else:
+        return np.array([np.array(roi[index][1:-1].split()[:1], dtype=np.float_) for roi in tmp])
+
+
 def concat_time(subject_df, indices, filter_mri, filter_ab, filter_tau, include_pet_volume):
     """
-
-    :param subject_df:
-    :param indices:
-    :param filter_mri:
-    :param filter_ab:
-    :param filter_tau:
-    :param include_pet_volume:
-    :return:
+    Concatenates time-series data based on specified filters.
     """
+    T, V = subject_df.shape[0], len(indices)
     if filter_mri:
-        T, V, D = subject_df.shape[0], len(indices), int(1 * filter_mri + filter_ab + filter_tau)
+        D = int(1 * filter_mri + filter_ab + filter_tau)
     else:
         if include_pet_volume:
-            T, V, D = subject_df.shape[0], len(indices), int(2 * filter_ab + 2 * filter_tau)
+            D = int(2 * filter_ab + 2 * filter_tau)
         else:
-            T, V, D = subject_df.shape[0], len(indices), int(filter_ab + filter_tau)
+            D = int(filter_ab + filter_tau)
     info = np.empty((T, V, D), np.float_)
 
     for r in range(T):
@@ -49,51 +59,17 @@ def concat_time(subject_df, indices, filter_mri, filter_ab, filter_tau, include_
         col_idx = 0
         if filter_mri:
             # FreeSurfer MRI ROI: [Cortical Volume, Surface Area, Thickness avg, Thickness std]
-            # default is take volume and thickness average
-            if any([not isinstance(roi[0], str) for roi in tmp]):
-                mri = np.nan_to_num(np.array([[roi[0]] for roi in tmp]))
-            else:
-                mri = np.array([
-                    np.array(
-                        [roi[0][1:-1].split()[2]],
-                        dtype=np.float_
-                    )
-                    for roi in tmp
-                ])
-            tmp_arr[:, col_idx:col_idx + 1] = mri
-            col_idx += 1
+            # default is take volume
+            mri = extract_values(tmp, 0)
+            tmp_arr[:, col_idx:col_idx + mri.shape[1]] = mri
+            col_idx += mri.shape[1]
         if filter_ab:
-            # Each PETSurfer ROI: [SUVR, FreeSurfer defined volume],
-            if include_pet_volume and not filter_mri:
-                if any([not isinstance(roi[1], str) for roi in tmp]):
-                    ab = np.nan_to_num(np.array([[roi[1]] for roi in tmp]))
-                else:
-                    ab = np.array([np.array(roi[1][1:-1].split(), dtype=np.float_) for roi in tmp])
-                tmp_arr[:, col_idx:col_idx + 2] = ab
-                col_idx += 2
-            else:
-                # only take SUVR
-                if any([not isinstance(roi[1], str) for roi in tmp]):
-                    ab = np.nan_to_num(np.array([[roi[1]] for roi in tmp]))
-                else:
-                    ab = np.array([np.array(roi[1][1:-1].split()[:1], dtype=np.float_) for roi in tmp])
-                tmp_arr[:, col_idx:col_idx + 1] = ab
-                col_idx += 1
+            ab = extract_values(tmp, 1, take_all=(include_pet_volume and not filter_mri))
+            tmp_arr[:, col_idx:col_idx + ab.shape[1]] = ab
+            col_idx += ab.shape[1]
         if filter_tau:
-            # Each PETSurfer ROI: [SUVR, FreeSurfer defined volume]
-            if include_pet_volume and not filter_mri:
-                if any([not isinstance(roi[2], str) for roi in tmp]):
-                    tau = np.nan_to_num(np.array([[roi[2]] for roi in tmp]))
-                else:
-                    tau = np.array([np.array(roi[2][1:-1].split(), dtype=np.float_) for roi in tmp])
-                tmp_arr[:, col_idx:col_idx + 2] = tau
-            else:
-                # only take SUVR
-                if any([not isinstance(roi[2], str) for roi in tmp]):
-                    tau = np.nan_to_num(np.array([[roi[2]] for roi in tmp]))
-                else:
-                    tau = np.array([np.array(roi[2][1:-1].split()[:1], dtype=np.float_) for roi in tmp])
-                tmp_arr[:, col_idx:col_idx + 1] = tau
+            tau = extract_values(tmp, 2, take_all=(include_pet_volume and not filter_mri))
+            tmp_arr[:, col_idx:col_idx + tau.shape[1]] = tau
         info[r] = tmp_arr
     return info
 

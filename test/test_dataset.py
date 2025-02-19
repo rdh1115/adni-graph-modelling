@@ -9,7 +9,7 @@ from src.data.utils import collator
 class MyTestCase(unittest.TestCase):
     def test_get_dataset(self):
         n_hist, n_pred, num_visits = 1, 0, 1
-        filter_list = (0, 1, 0)
+        filter_list = (1, 1, 1)
         filter_diagnosis, include_pet_volume = False, False
         norm = False
         graph_token = False
@@ -69,7 +69,7 @@ class MyTestCase(unittest.TestCase):
             dataset_train,
             sampler=sampler_train,
             batch_size=1,
-            num_workers=4,
+            num_workers=0,
             pin_memory=True,
             drop_last=True,
             collate_fn=partial(
