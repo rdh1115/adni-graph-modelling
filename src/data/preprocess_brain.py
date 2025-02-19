@@ -187,8 +187,7 @@ def get_raw_data_brain(
             if i == 0 and task == 'class':
                 # all historical scans have the same labels
                 # labels.append(max([DX_DICT[dx] for dx in d['DX']]))  # only the worst diagnosis is used,
-                labels.append(
-                    [DX_DICT[dx] for dx in d['DX']][-1])  # only the last diagnosis is used, label is mostly same
+                labels.append([DX_DICT[dx] for dx in d['DX']][-1])  # only the last diagnosis is used, label is mostly same
             # if task == 'class':
             # if d['visits'] > n_hist:
             # only keep first and last + evenly spaced out middle indices
@@ -217,6 +216,7 @@ def get_raw_data_brain(
                 [[DX_DICT[dx] for dx in x[rid]['DX']][-1] for _ in arr[0]]
                 for rid, arr in subject_X.items()
             ])
+            targets = np.expand_dims(targets, -1)
         else:
             raise ValueError(f'Unknown task: {task}')
         add_feature_keys = set.intersection(*[set(d.keys()) for d in add_features.values()])
