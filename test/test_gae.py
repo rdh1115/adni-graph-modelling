@@ -5,12 +5,13 @@ from functools import partial
 from src.data.get_dataset import get_dataset
 from src.data.utils import collator
 from src.baselines import GCNMae
+from src.model_gmae import GraphAutoEncoder
 
 
 class MyTestCase(unittest.TestCase):
     def setUp(self):
         n_hist, n_pred, num_visits = 1, 0, 1
-        filter_list = (0, 1, 0)
+        filter_list = (1, 1, 0)
         filter_diagnosis, include_pet_volume = False, False
         norm = False
         graph_token = False
@@ -87,14 +88,45 @@ class MyTestCase(unittest.TestCase):
         print(self.batch['edge_index'].shape, self.batch['edge_attr'].shape)
         model = GCNMae(
             encoder_embed_dim=64,
-            latent_dim=8,
-            encoder_depth=10,
+            latent_dim=16,
+            encoder_depth=6,
             pool_ratio=0.7,
             **self.graph_info
         )
+        print(model.encoder_final_dim, model.seq_dim, model.encoder_depth)
+        model = GCNMae(
+            encoder_embed_dim=128,
+            latent_dim=16,
+            encoder_depth=6,
+            pool_ratio=0.7,
+            **self.graph_info
+        )
+        print(model.encoder_final_dim, model.seq_dim, model.encoder_depth)
+        model = GCNMae(
+            encoder_embed_dim=256,
+            latent_dim=16,
+            encoder_depth=6,
+            pool_ratio=0.7,
+            **self.graph_info
+        )
+        print(model.encoder_final_dim, model.seq_dim, model.encoder_depth)
         model(self.batch)
-        model.forward_loss(self.batch, torch.nn.MSELoss())
+        print(model.forward_loss(self.batch, torch.nn.MSELoss()))
 
+    def test_graphormer(self):
+        model = GraphAutoEncoder(
+            static_graph=True,
+            graph_token=False,
+            start_conv=True,
+            centrality_encoding=True,
+            attention_bias=True,
+            edge_features=False,
+            old_config=False,
+            num_encoder_layers=6,
+            embedding_dim=64,
+            activation_fn="gelu",
+            **self.graph_info
+        )
 
 if __name__ == '__main__':
     unittest.main()

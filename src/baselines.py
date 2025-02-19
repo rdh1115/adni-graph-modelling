@@ -161,7 +161,6 @@ class GCNMae(nn.Module):
             self,
             node_feature_dim: int = 1,
             num_nodes: int = 68,
-            mlp_pred_dropout: float = 0.1,
             encoder_embed_dim: int = 512,
             latent_dim: int = 512,
             encoder_depth=3,
@@ -183,7 +182,6 @@ class GCNMae(nn.Module):
         self.latent_dim = latent_dim
 
         self.trunc_init = trunc_init
-        self.mlp_pred_dropout = nn.Dropout(mlp_pred_dropout)
         self.dropout_module = nn.Dropout(dropout)
 
         graph_conv = GRAPH_CONV_DICT[gcn_type]
@@ -208,10 +206,13 @@ class GCNMae(nn.Module):
             for i in range(encoder_depth)
         ])
         encoder_final_dim = encoder_dims[-1][-1]
+        self.encoder_final_dim = encoder_final_dim
 
         self.pool_ratio = pool_ratio
         self.pooling = TopKPooling(encoder_dims[-1][-1], ratio=pool_ratio)
         seq_dim = encoder_final_dim * math.ceil(num_nodes * pool_ratio)
+        self.seq_dim = seq_dim
+
         self.head = nn.Linear(seq_dim, latent_dim)
         self.norm = norm_layer(latent_dim)
 
@@ -300,10 +301,10 @@ class GCNMae(nn.Module):
         return x.view(N, -1)
 
     def forward_loss(self, data, criterion=torch.nn.MSELoss()):
-        x = self.forward(data)
+        pred = self.forward(data)
         y = data['x']
         N, T, V, D = y.shape
-        loss = criterion(x, y.view(N, -1))
+        loss = criterion(pred, y.view(N, -1))
         return loss
 
 
@@ -544,6 +545,42 @@ class STGCN(TimeSeriesPred):
         x = self.norm(x)
         pred = self.forward_end_conv(x, x.shape)
         return pred
+
+
+def gae_micro(**kwargs):
+    model = GCNMae(
+        encoder_embed_dim=64,
+        latent_dim=8,
+        encoder_depth=6,
+        pool_ratio=0.7,
+        norm_layer=partial(nn.LayerNorm, eps=1e-8),
+        **kwargs
+    )
+    return model
+
+
+def gae_mini(**kwargs):
+    model = GCNMae(
+        encoder_embed_dim=128,
+        latent_dim=8,
+        encoder_depth=6,
+        pool_ratio=0.7,
+        norm_layer=partial(nn.LayerNorm, eps=1e-8),
+        **kwargs
+    )
+    return model
+
+
+def gae_small(**kwargs):
+    model = GCNMae(
+        encoder_embed_dim=256,
+        latent_dim=8,
+        encoder_depth=6,
+        pool_ratio=0.7,
+        norm_layer=partial(nn.LayerNorm, eps=1e-8),
+        **kwargs
+    )
+    return model
 
 
 def gnn_mlp_mini(**kwargs):

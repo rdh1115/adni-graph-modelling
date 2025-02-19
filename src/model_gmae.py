@@ -728,367 +728,61 @@ class GraphAutoEncoder(GraphEncoder):
 
     def __init__(
             self,
-            # < graph args
-            node_feature_dim: int = 1,
-            pred_node_dim: int = 1,
-            num_nodes: int = 512 * 9,
-            num_edges: int = 512 * 3,
-            num_in_degree: int = 512,
-            num_out_degree: int = 512,
-            num_spatial: int = 512,  # longest edge distance between nodes, spatial encoding in graphormer
-            num_edge_dis: int = 128,
-            edge_type: str = 'multi_hop',
-            multi_hop_max_dist: int = 5,
-            static_graph=True,
-            edge_features=False,
-            n_hist=12,
-            # >
-
-            # < transformer args
-            graph_token=True,
-            cls_token=False,
-            sep_pos_embed=True,
-            attention_bias=True,
-            centrality_encoding=True,
-            num_heads=16,
-            encoder_embed_dim=1024,
-            encoder_depth=24,
             latent_dim=16,
             pool_ratio=0.7,
-            decoder_depth=8,
-            dropout=0.1,
-            pre_layernorm=True,
-            norm_layer=nn.LayerNorm,
-            trunc_init=False,
-            act_fn='gelu',
-            # >
             *args,
             **kwargs
     ):
         super().__init__(*args, **kwargs)
-        if not static_graph:
-            raise NotImplementedError()
-
-        self.pred_node_dim = node_feature_dim
-        decoder_embed_dim = node_feature_dim
+        decoder_embed_dim = self.node_feature_dim
         self.decoder_embed_dim = decoder_embed_dim
-        self.decoder_cls_token = cls_token
-        self.decoder_graph_token = graph_token
-
-        self.sep_pos_embed = sep_pos_embed
-        self.attention_bias = attention_bias
-        self.centrality_encoding = centrality_encoding
-        self.act_fn = act_fn
-        self.activation = nn.GELU() if act_fn == 'gelu' else nn.ReLU()
 
         # encoder inits
         if self.graph_token:
-            self.graph_token_embed = nn.Parameter(torch.zeros(1, 1, 1, encoder_embed_dim))
             self.decoder_graph_token_embed = nn.Parameter(torch.zeros(1, 1, 1, decoder_embed_dim))
-            self.graph_token_virtual_distance = nn.Embedding(1, num_heads)
         if self.cls_token:
             assert self.graph_token is False, "cannot have both tokens"
-            self.cls_token_embed = nn.Parameter(torch.zeros(1, 1, encoder_embed_dim))
             self.decoder_cls_token_embed = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
-            self.cls_token_virtual_distance = nn.Embedding(1, num_heads)
-
-        self.norm = norm_layer(encoder_embed_dim)  # final encoder norm layer
 
         self.pool_ratio = pool_ratio
-        self.pooling = TopKPooling(encoder_embed_dim, ratio=self.pool_ratio)
+        self.pooling = TopKPooling(self.encoder_embed_dim, ratio=self.pool_ratio)
 
-        seq_dim = encoder_embed_dim * math.ceil(num_nodes * pool_ratio)
+        seq_dim = self.encoder_embed_dim * math.ceil(self.num_nodes * pool_ratio)
         self.latent_embed = nn.Linear(seq_dim, latent_dim)
-        self.latent_norm = norm_layer(latent_dim)
+        self.latent_norm = nn.LayerNorm(latent_dim, eps=1e-8)
 
-        output_dim = node_feature_dim * num_nodes
+        output_dim = self.node_feature_dim * self.num_nodes
         self.decoder_embed = nn.Linear(latent_dim, output_dim)
         self.decoder_blocks = graphormer_graph_encoder.GraphormerGraphEncoder(
-            node_feature_dim=node_feature_dim,
-            num_nodes=num_nodes,
-            num_in_degree=num_in_degree,
-            num_out_degree=num_out_degree,
-            num_edges=num_edges,
-            num_spatial=num_spatial,
-            num_edge_dis=num_edge_dis,
-            edge_type=edge_type,
-            multi_hop_max_dist=multi_hop_max_dist,
-            num_encoder_layers=decoder_depth,
+            node_feature_dim=self.node_feature_dim,
+            num_nodes=self.num_nodes,
+            num_in_degree=self.num_in_degree,
+            num_out_degree=self.num_out_degree,
+            num_edges=self.num_edges,
+            num_spatial=self.num_spatial,
+            num_edge_dis=self.num_edge_dis,
+            edge_type=self.edge_type,
+            multi_hop_max_dist=self.multi_hop_max_dist,
+            num_encoder_layers=self.encoder_depth // 2,
             embedding_dim=decoder_embed_dim,
             ffn_embedding_dim=decoder_embed_dim * 4,
-            num_attention_heads=num_heads,
+            num_attention_heads=self.num_heads,
             static_graph=self.static_graph,
             graph_token=self.graph_token,
             start_conv=False,
             centrality_encoding=self.centrality_encoding,
             attention_bias=False,
-            pre_layernorm=pre_layernorm,
-            activation_fn=act_fn,
-            dropout=dropout,
+            pre_layernorm=self.pre_layernorm,
+            activation_fn=self.act_fn,
+            dropout=self.dropout,
         )
-        self.decoder_norm = norm_layer(decoder_embed_dim)
-
-        if sep_pos_embed:
-            self.pos_embed_time = nn.Parameter(
-                torch.zeros(1, n_hist, encoder_embed_dim),
-            )
-            self.pos_embed_space = nn.Parameter(
-                torch.zeros(1, num_nodes, encoder_embed_dim),
-            )
-
-            self.decoder_pos_embed_time = nn.Parameter(
-                torch.zeros(1, n_hist, decoder_embed_dim),
-            )
-            self.decoder_pos_embed_space = nn.Parameter(
-                torch.zeros(1, num_nodes, decoder_embed_dim),
-            )
-            if self.graph_token or self.cls_token:
-                self.pos_embed_cls = nn.Parameter(torch.zeros(1, 1, encoder_embed_dim))
-                self.decoder_pos_embed_cls = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
-        else:
-            if self.graph_token:
-                self.pos_embed = nn.Parameter(
-                    torch.zeros(1, n_hist * (num_nodes + 1), encoder_embed_dim),
-                )
-                self.decoder_pos_embed = nn.Parameter(
-                    torch.zeros(1, n_hist * (num_nodes + 1), decoder_embed_dim),
-                )
-            elif self.cls_token:
-                self.pos_embed = nn.Parameter(
-                    torch.zeros(1, n_hist * num_nodes + 1, encoder_embed_dim),
-                )
-                self.decoder_pos_embed = nn.Parameter(
-                    torch.zeros(1, n_hist * num_nodes + 1, decoder_embed_dim),
-                )
-            else:
-                self.pos_embed = nn.Parameter(
-                    torch.zeros(1, n_hist * num_nodes, encoder_embed_dim),
-                )
-                self.decoder_pos_embed = nn.Parameter(
-                    torch.zeros(1, n_hist * num_nodes, decoder_embed_dim),
-                )
+        self.decoder_norm = nn.LayerNorm(decoder_embed_dim, eps=1e-8)
 
         self.initialize_weights()
 
         print("model initialized")
 
-    def initialize_weights(self):
-        if self.sep_pos_embed:
-            torch.nn.init.trunc_normal_(self.pos_embed_time, std=0.02)
-            torch.nn.init.trunc_normal_(self.pos_embed_space, std=0.02)
-            torch.nn.init.trunc_normal_(self.decoder_pos_embed_time, std=0.02)
-            torch.nn.init.trunc_normal_(self.decoder_pos_embed_space, std=0.02)
-            if self.graph_token or self.cls_token:
-                torch.nn.init.trunc_normal_(self.pos_embed_cls, std=0.02)
-                torch.nn.init.trunc_normal_(self.decoder_pos_embed_cls, std=0.02)
-        else:
-            torch.nn.init.trunc_normal_(self.pos_embed, std=0.02)
-            torch.nn.init.trunc_normal_(self.decoder_pos_embed, std=0.02)
-
-        if self.centrality_encoding:
-            torch.nn.init.trunc_normal_(
-                self.blocks.graph_node_feature.in_degree_encoder.weight,
-                mean=0.0,
-                std=0.02
-            )
-            torch.nn.init.trunc_normal_(
-                self.blocks.graph_node_feature.out_degree_encoder.weight,
-                mean=0.0,
-                std=0.02
-            )
-        if self.attention_bias:
-            torch.nn.init.trunc_normal_(
-                self.blocks.graph_attn_bias.spatial_pos_encoder.weight,
-                mean=0.0,
-                std=0.02
-            )
-        if self.blocks.edge_features:
-            torch.nn.init.trunc_normal_(
-                self.blocks.graph_attn_bias.edge_encoder.weight,
-                mean=0.0,
-                std=0.02
-            )
-            if self.blocks.graph_attn_bias.edge_type == "multi_hop":
-                torch.nn.init.trunc_normal_(
-                    self.blocks.graph_attn_bias.edge_dis_encoder.weight,
-                    mean=0.0,
-                    std=0.02
-                )
-        if self.graph_token:
-            torch.nn.init.trunc_normal_(self.graph_token_embed, std=0.02)
-            torch.nn.init.trunc_normal_(self.graph_token_virtual_distance.weight, std=0.02)
-            torch.nn.init.trunc_normal_(self.decoder_graph_token_embed, std=0.02)
-        elif self.cls_token:
-            torch.nn.init.trunc_normal_(self.cls_token_embed, std=0.02)
-            torch.nn.init.trunc_normal_(self.cls_token_virtual_distance.weight, std=0.02)
-            torch.nn.init.trunc_normal_(self.decoder_cls_token_embed, std=0.02)
-        if self.trunc_init:
-            torch.nn.init.trunc_normal_(self.mask_token, std=0.02)
-        else:
-            torch.nn.init.normal_(self.mask_token, std=0.02)
-
-        # initialize nn.Linear and nn.LayerNorm
-        self.apply(self._init_weights)
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            # we use xavier_uniform following official JAX ViT:
-            if self.trunc_init:
-                nn.init.trunc_normal_(m.weight, std=0.02)
-            else:
-                torch.nn.init.xavier_uniform_(m.weight)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.BatchNorm2d):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.Conv2d):
-            if self.trunc_init:
-                nn.init.trunc_normal_(m.weight, std=0.02)
-            else:
-                torch.nn.init.xavier_uniform_(m.weight)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-
-    def add_token_distance(self, cls, attn_bias: torch.Tensor, device: torch.device):
-        if not self.attention_bias:
-            return None
-        # correct attn_bias for added tokens
-        N, n_heads, L, _ = attn_bias.shape
-        if cls:
-            # fix attn bias shape based on added cls token
-            attn_bias = torch.cat(
-                [torch.zeros(N, n_heads, 1, L, device=device), attn_bias],
-                dim=2
-            )
-            attn_bias = torch.cat(
-                [torch.zeros(N, n_heads, L + 1, 1, device=device), attn_bias],
-                dim=3
-            )
-            # add virtual distance attn bias here for VNode
-            t = self.cls_token_virtual_distance.weight.repeat(N, 1).view(-1, n_heads, 1)
-            attn_bias[:, :, 1:, 0] = attn_bias[:, :, 1:, 0].clone() + t
-            attn_bias[:, :, 0, :] = attn_bias[:, :, 0, :].clone() + t
-        else:
-            t = self.graph_token_virtual_distance.weight.repeat(N, 1).view(-1, n_heads, 1)
-            attn_bias[:, :, 1:, 0] = attn_bias[:, :, 1:, 0].clone() + t
-            attn_bias[:, :, 0, :] = attn_bias[:, :, 0, :].clone() + t
-        return attn_bias
-
-    def get_graph_rep(self, x, x_shape):
-        # isolate graph tokens from x
-        N, T, V, D = x_shape
-
-        if self.graph_token:
-            x = x.contiguous().view(N, T, -1, D)
-            graph_rep = x[:, :, :1, :]
-            x = x[:, :, 1:, :]
-        elif self.cls_token:
-            graph_rep = x[:, :1, :]
-            x = x[:, 1:, :]
-        else:
-            graph_rep = None
-            x = x[:, :, :]
-        return graph_rep, x
-
-    def forward_encoder(self, x: torch.Tensor, attn_bias: torch.Tensor):
-        """
-
-        :param x: time series data [Batch, Vertices, Embed_Dim, Time_step]
-        :param attn_bias: attention bias computed based on graph structure and edge
-        lengths [Batch, n_heads, Vertices, Vertices]
-        :return: Tuple of
-        [X of shape (Batch, Time_step * Vertices + added tokens, Embed_dim),
-        graph_representation,
-        mask from random_masking used to get binary mask,
-        ids_restore to un-shuffle,
-        x_shape from original input used for shaping]
-        """
-        if not self.attention_bias:
-            del attn_bias
-            attn_bias = None
-        x_shape = list(x.shape)
-        N, T, V, D = x_shape
-
-        if self.graph_token:
-            # 1 graph token for each time step,
-            # masks based on each time_step, ids_keep shape [n_batches, T, V*mask_ratio]
-
-            # repeating since graph tokens stay the same through time dimension
-            graph_token_feature = self.graph_token_embed.expand(N, T, -1, -1)
-            x = torch.cat([graph_token_feature, x], dim=2)
-            x = x.contiguous().view(N, -1, D)
-
-            attn_bias = self.add_token_distance(
-                cls=False,
-                attn_bias=attn_bias,
-                device=x.device
-            )
-            attn_bias = attn_bias.repeat(1, 1, T, T) if self.attention_bias else None
-
-            n_tokens = x.shape[1]
-        else:
-            # 1 graph token for all time steps (cls token) or no graph token
-            x = x.contiguous().view(N, -1, D)
-
-            # concatenate the cls_token
-            if self.cls_token:
-                cls_embed = self.cls_token_embed
-                cls_embeds = cls_embed.contiguous().expand(N, -1, -1)
-                x = torch.cat((cls_embeds, x), dim=1)
-
-            attn_bias = attn_bias.repeat(1, 1, T, T) if self.attention_bias else None  # expand the time dimensions
-
-            n_tokens = x.shape[1]
-        if self.cls_token:
-            attn_bias = self.add_token_distance(
-                cls=True,
-                attn_bias=attn_bias,
-                device=x.device
-            )
-
-        if not self.ablate_pos_embed:
-            if self.sep_pos_embed:
-                pos_embed = self.pos_embed_space.repeat(
-                    1, T, 1
-                ) + torch.repeat_interleave(
-                    self.pos_embed_time,
-                    V,
-                    dim=1
-                )
-                pos_embed = pos_embed.expand(N, -1, -1)
-                if self.graph_token:
-                    pos_embed_token = self.pos_embed_cls.expand(N, T, -1, -1)
-                    pos_embed = torch.cat(
-                        [
-                            pos_embed_token,
-                            pos_embed.contiguous().view(N, T, V, D),
-                        ],
-                        dim=2
-                    )
-                elif self.cls_token:
-                    pos_embed_token = self.pos_embed_cls.expand(N, -1, -1)
-                    pos_embed = torch.cat(
-                        [pos_embed_token, pos_embed],
-                        dim=1
-                    )
-            else:
-                pos_embed = self.pos_embed[:, :, :].expand(N, -1, -1)
-
-            x = x + pos_embed.contiguous().view(N, -1, D)
-
-        # apply Transformer blocks
-        inner_states = self.blocks(x, attn_bias)
-        x = inner_states[-1].contiguous().transpose(0, 1)
-
-        graph_rep, x = self.get_graph_rep(x, x_shape)
-        x = x.contiguous().view(N, -1, D)
-        return x, graph_rep, x_shape
-
-    def forward_decoder(self, x, ids_restore, x_shape, attn_bias: torch.Tensor):
+    def forward_decoder(self, x, x_shape, attn_bias: torch.Tensor):
         N, T, V, D = x_shape
         if not self.attention_bias:
             del attn_bias
@@ -1096,52 +790,7 @@ class GraphAutoEncoder(GraphEncoder):
         # embed tokens
         x = self.decoder_embed(x)
         D = x.shape[-1]
-        # append mask tokens to sequence
-        mask_tokens = self.mask_token.repeat(N, T * V - x.shape[1], 1)
-        x = torch.cat([x[:, :, :], mask_tokens], dim=1)  # no cls token
 
-        # unshuffle and recover the original input
-        if self.decoder_graph_token:
-            assert ids_restore.shape[1] * ids_restore.shape[2] == T * V
-            x = x.contiguous().view(N, T, V, D)
-            x = torch.gather(
-                x, dim=2, index=ids_restore.unsqueeze(-1).expand(-1, -1, -1, D)
-            )  # unshuffle
-            graph_token_feature = self.decoder_graph_token_embed.expand(N, T, -1, -1)
-            x = torch.cat([graph_token_feature, x], dim=2)
-            x = x.contiguous().view(N, -1, D)
-
-            attn_bias = self.add_token_distance(
-                cls=False,
-                attn_bias=attn_bias,
-                device=x.device
-            )
-            attn_bias = attn_bias.repeat(1, 1, T, T) if self.attention_bias else None
-        elif self.decoder_cls_token:
-            assert ids_restore.shape[-1] == T * V
-            x = x.contiguous().view(N, T * V, D)
-            x = torch.gather(
-                x, dim=1, index=ids_restore.unsqueeze(-1).expand(-1, -1, D)
-            )
-            cls_embed = self.decoder_cls_token_embed
-            cls_embeds = cls_embed.expand(N, -1, -1)
-            x = torch.cat((cls_embeds, x), dim=1)
-            x = x.contiguous().view(N, T * V + 1, D)
-
-            # fix attn_bias
-            attn_bias = attn_bias.repeat(1, 1, T, T) if self.attention_bias else None
-            attn_bias = self.add_token_distance(
-                cls=True,
-                attn_bias=attn_bias,
-                device=x.device
-            )
-        else:
-            x = x.contiguous().view(N, T * V, D)
-            x = torch.gather(
-                x, dim=1, index=ids_restore.unsqueeze(-1).expand(-1, -1, D)
-            )
-            x = x.contiguous().view(N, T * V, D)
-            attn_bias = attn_bias.repeat(1, 1, T, T) if self.attention_bias else None
 
         if self.sep_pos_embed:
             decoder_pos_embed = self.decoder_pos_embed_space.repeat(
@@ -1181,54 +830,42 @@ class GraphAutoEncoder(GraphEncoder):
 
         _, x = self.get_graph_rep(x, (N, T, V, self.decoder_embed_dim))
 
-        x = x.contiguous().view(N, T, V, -1).transpose(1, 3)  # [N, T, V, D] -> [N, D, V, T]
-        x = self.decoder_conv_1(x)  # [N, D, V, T] -> [N, end, V, T]
-        x = self.decoder_batch_norm(x)
-        x = self.activation(x)
-        x = self.decoder_conv_2(x)  # [N, end, V, T] -> [N, D, V, T]
+        x = x.contiguous().view(N, T, V, -1)
+
         x = x.transpose(1, 3)  # [N, D, V, T] -> [N, T, V, D]
 
         x = x.contiguous().view(N, -1, self.pred_node_dim)
         return x
 
-    def forward_loss(self, orig_x, pred, mask, scaler):
-        """
-        orig_x: [N, T, V, D]
-        pred: [N, T*V, D]
-        mask: [N, T, V], 0 is keep, 1 is remove,
-        """
-        N, T, V, D = orig_x.shape
-        assert V == self.num_nodes, T == self.n_hist
+    def forward(self, batched_data):
+        edge_index, edge_weight = batched_data['edge_index'], batched_data['edge_attr']
+        N, T, V, D = batched_data['x'].shape
 
-        if self.node_feature_dim != self.pred_node_dim:
-            if self.pred_node_dim == 1:  # only calculate loss on sensor data
-                orig_x = orig_x[..., [0]]
-
-        if scaler is not None:
-            orig_x = scaler.inverse_transform(orig_x)
-            pred = scaler.inverse_transform(pred)
-
-        orig_x = orig_x.contiguous().view(N, -1, self.pred_node_dim)
-        loss = (pred - orig_x) ** 2
-        loss = loss.mean(dim=-1)  # [N, n_tokens], mean loss per node
-
-        mask = mask.view(loss.shape)
-        loss = (loss * mask).sum() / mask.sum()  # mean loss on removed nodes
-        return loss
-
-    def forward(self, batched_data, mask_ratio=0.75):
         # compute attention biases and node centrality encodings
         x, attn_bias = self.blocks.compute_mods(batched_data)
-        latent, _, mask, ids_restore, x_shape = self.forward_encoder(
+        x, graph_rep, x_shape = self.forward_encoder(
             x,
-            attn_bias.clone() if self.attention_bias else None,
-            mask_ratio
+            attn_bias.clone() if self.attention_bias else None
         )
+        x = self.latent_embed(x)
+        x = self.latent_norm(x)
 
+        # Flatten edge_index for each graph in the batch
+        edge_index = edge_index.view(2, -1)  # [2, N*E]
+        edge_weight = edge_weight.view(-1)
+
+        # Shift the edge indices to account for batch-wise node indexing
+        batch_offsets = torch.arange(N, device=edge_index.device) * V
+        edge_index[0] += torch.repeat_interleave(batch_offsets, edge_index.size(1) // N)
+        edge_index[1] += torch.repeat_interleave(batch_offsets, edge_index.size(1) // N)
+
+        # Create a batch tensor indicating the graph each node belongs to
+        batch = torch.repeat_interleave(torch.arange(N, device=x.device), V)
+
+        x, _, _, _, _, _ = self.pooling(x, edge_index, edge_weight, batch)
         # decoder to recover masked nodes
-        pred = self.forward_decoder(latent, ids_restore, x_shape, attn_bias)  # [N, n_tokens, D]
-        loss = self.forward_loss(batched_data['x'], pred, mask, batched_data['scaler'])
-        return loss, pred, mask
+        pred = self.forward_decoder(x, x_shape, attn_bias)  # [N, n_tokens, D]
+        return pred
 
 
 def mae_graph_debug(**kwargs):

@@ -8,7 +8,7 @@ def generate_subject_info(df, add_feature_keys=None):
     subject_info = {rid: dict() for rid in df['RID'].unique()}
     if add_feature_keys is None:
         add_feature_keys = [
-            'VISCODE', 'DXCHANGE_NEW', 'APOE4', 'DX_bl', 'DX', 'AGE', 'PTGENDER', 'PTEDUCAT',
+            'VISCODE', 'EXAMDATE', 'DXCHANGE_NEW', 'APOE4', 'DX_bl', 'DX', 'PTGENDER', 'PTEDUCAT',
             'MMSE', 'MOCA',
             'ADAS11', 'ADAS13', 'ADASQ4',
             'RAVLT_immediate', 'RAVLT_learning', 'RAVLT_forgetting', 'RAVLT_perc_forgetting',
@@ -16,14 +16,22 @@ def generate_subject_info(df, add_feature_keys=None):
         ]
     for rid in subject_info:
         sub_df = df[df['RID'] == rid]
-        subject_info[rid]['viscode'] = list(sub_df['VISCODE'])
         for key in add_feature_keys:
-            subject_info[rid][key] = list(sub_df[key])
+            if key == 'EXAMDATE':
+                dt = sub_df['EXAMDATE']
+                # store another key for the time in days since the first visit
+                subject_info[rid]['DELTA_DAYS'] = list((dt - dt.min()).dt.days)
+                # also store the new age at each visit
+                subject_info[rid]['AGE'] = list((dt - dt.min()).dt.days / 365.25 + sub_df['AGE'])
+                subject_info[rid][key] = list(dt.astype(str))
+            else:
+                subject_info[rid][key] = list(sub_df[key])
     return subject_info
 
 
 def get_roi_indices(header, roi_labels):
-    return {roi: [header.get_loc(col) for col in header if col.endswith(roi)]
+    return {
+        roi: [header.get_loc(col) for col in header if col.endswith(roi)]
             for roi in roi_labels}
 
 
@@ -114,7 +122,6 @@ def get_subject_dict(
     :param filter_diagnosis:
     :param include_pet_volume:
     :return: dictionary where keys are subject_ids and values are subject dictionaries
-    each subject dictionary contains 'viscode, DX_CHANGE, APOE4, DX_bl, DX, arr'
     """
     if csv_fp is None:
         data_dir = os.path.dirname(os.path.realpath(__file__))
@@ -146,10 +153,14 @@ def get_subject_dict(
         filter_scans += [tau]
     df = filter_condition(df, filter_scans)
 
+    # order by RID and EXAMDATE
+    df['EXAMDATE'] = pd.to_datetime(df['EXAMDATE'])
+    df = df.sort_values(by=['RID', 'EXAMDATE'])
+
     subject_info = generate_subject_info(df)
     output = dict()
     for rid, d in subject_info.items():
-        if len(d['viscode']) >= num_visits:
+        if len(d['VISCODE']) >= num_visits:
             subject_df = df[df['RID'] == rid]
             info_arr = concat_time(
                 subject_df,

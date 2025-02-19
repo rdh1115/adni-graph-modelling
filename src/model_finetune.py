@@ -107,6 +107,7 @@ class GraphEncoder(nn.Module):
         self.act_fn = act_fn
         self.hist_t_dim = n_hist
         self.num_heads = num_heads
+        self.encoder_depth = encoder_depth
         self.dropout = dropout
 
         # MAE pretrained encoder
