@@ -298,7 +298,8 @@ class GCNMae(nn.Module):
         for conv in self.decoder_convs:
             x = conv(x, edge_index, edge_weight)
             x = F.relu(x)
-        return x.view(N, V, D)
+        x = x.contiguous().view(N, V, D)
+        return x
 
     def forward_loss(self, data, criterion=torch.nn.MSELoss()):
         pred = self.forward(data)
