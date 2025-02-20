@@ -294,7 +294,7 @@ class GCNMae(nn.Module):
 
         x = F.relu(self.decoder_head(x))
         x = self.decoder_norm(x)
-        x = x.view(N, V, D)
+        x = x.view(N * V, D)
         for conv in self.decoder_convs:
             x = conv(x, edge_index, edge_weight)
             x = F.relu(x)
