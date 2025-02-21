@@ -258,7 +258,7 @@ class GCNMae(nn.Module):
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
-    def forward(self, data):
+    def encoder(self, data):
         x, edge_index, edge_weight = data['x'], data['edge_index'], data['edge_attr']
         x_shape = x.shape
         N, T, V, D = x_shape
@@ -291,6 +291,13 @@ class GCNMae(nn.Module):
         x = x.contiguous().view(N, -1)
         x = self.head(x)
         x = self.norm(x)
+        return x
+
+    def forward(self, data):
+        x, edge_index, edge_weight = data['x'], data['edge_index'], data['edge_attr']
+        x_shape = x.shape
+        N, T, V, D = x_shape
+        x = self.encoder(data)
 
         x = F.relu(self.decoder_head(x))
         x = self.decoder_norm(x)
