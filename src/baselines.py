@@ -322,7 +322,7 @@ class GCNMae(nn.Module):
         x = x.view(N * V, D)
         for i, conv in enumerate(self.decoder_convs):
             x = conv(x, edge_index, edge_weight)
-            x = self.decoder_conv_norm(x)
+            # x = self.decoder_conv_norm(x)
             x = F.relu(x)
 
         x = x.contiguous().view(N, V, D)
