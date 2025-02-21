@@ -267,22 +267,8 @@ class GCNMae(nn.Module):
         x, edge_index, edge_weight = data['x'], data['edge_index'], data['edge_attr']
         x_shape = x.shape
         N, T, V, D = x_shape
-        if T > 1:
-            raise ValueError('GNN only supports 1 time step')
-
-        # Flatten the batch dimension, so x becomes [N*V, D]
         x = x.view(N * V, D)
-
         x = torch.randn_like(x, device=x.device, dtype=x.dtype) * 0.07
-
-        # Flatten edge_index for each graph in the batch
-        edge_index = edge_index.view(2, -1)  # [2, N*E]
-        edge_weight = edge_weight.view(-1)
-
-        # Shift the edge indices to account for batch-wise node indexing
-        batch_offsets = torch.arange(N, device=edge_index.device) * V
-        edge_index[0] += torch.repeat_interleave(batch_offsets, edge_index.size(1) // N)
-        edge_index[1] += torch.repeat_interleave(batch_offsets, edge_index.size(1) // N)
 
         # Create a batch tensor indicating the graph each node belongs to
         batch = torch.repeat_interleave(torch.arange(N, device=x.device), V)
@@ -315,6 +301,8 @@ class GCNMae(nn.Module):
         batch_offsets = torch.arange(N, device=edge_index.device) * V
         edge_index[0] += torch.repeat_interleave(batch_offsets, edge_index.size(1) // N)
         edge_index[1] += torch.repeat_interleave(batch_offsets, edge_index.size(1) // N)
+        data['edge_index'], data['edge_attr'] = edge_index, edge_weight
+
 
         x = self.encoder(data)
 
