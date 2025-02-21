@@ -227,7 +227,7 @@ class GCNMae(nn.Module):
             graph_conv(node_feature_dim, node_feature_dim)
             for _ in range(math.floor(encoder_depth // 2))
         ])
-        self.decoder_conv_norm = norm_layer(node_feature_dim)
+        # self.decoder_conv_norm = norm_layer(node_feature_dim)
         self.initialize_weights()
 
     @torch.jit.ignore
