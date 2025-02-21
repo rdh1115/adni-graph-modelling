@@ -268,7 +268,7 @@ class GCNMae(nn.Module):
         x_shape = x.shape
         N, T, V, D = x_shape
         x = x.view(N * V, D)
-        x = torch.randn_like(x, device=x.device, dtype=x.dtype) * 0.07
+        x = x + torch.randn_like(x, device=x.device, dtype=x.dtype) * 0.07
 
         # Create a batch tensor indicating the graph each node belongs to
         batch = torch.repeat_interleave(torch.arange(N, device=x.device), V)
