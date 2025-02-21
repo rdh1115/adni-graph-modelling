@@ -306,7 +306,6 @@ class GCNMae(nn.Module):
         x, edge_index, edge_weight = data['x'], data['edge_index'], data['edge_attr']
         x_shape = x.shape
         N, T, V, D = x_shape
-        x = self.encoder(data)
 
         # Flatten edge_index for each graph in the batch
         edge_index = edge_index.view(2, -1)  # [2, N*E]
@@ -316,6 +315,8 @@ class GCNMae(nn.Module):
         batch_offsets = torch.arange(N, device=edge_index.device) * V
         edge_index[0] += torch.repeat_interleave(batch_offsets, edge_index.size(1) // N)
         edge_index[1] += torch.repeat_interleave(batch_offsets, edge_index.size(1) // N)
+
+        x = self.encoder(data)
 
         x = F.relu(self.decoder_head(x))
         x = self.decoder_norm(x)
