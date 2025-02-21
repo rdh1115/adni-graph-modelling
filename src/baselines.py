@@ -205,6 +205,10 @@ class GCNMae(nn.Module):
             graph_conv(encoder_dims[i][0], encoder_dims[i][1])
             for i in range(encoder_depth)
         ])
+        self.conv_norms = torch.nn.ModuleList([
+            norm_layer(encoder_dims[i][1])
+            for i in range(encoder_depth)
+        ])
         encoder_final_dim = encoder_dims[-1][-1]
         self.encoder_final_dim = encoder_final_dim
 
@@ -223,6 +227,7 @@ class GCNMae(nn.Module):
             graph_conv(node_feature_dim, node_feature_dim)
             for _ in range(math.floor(encoder_depth // 2))
         ])
+        self.decoder_conv_norm = norm_layer(node_feature_dim)
         self.initialize_weights()
 
     @torch.jit.ignore
@@ -268,6 +273,8 @@ class GCNMae(nn.Module):
         # Flatten the batch dimension, so x becomes [N*V, D]
         x = x.view(N * V, D)
 
+        x = torch.randn_like(x, device=x.device) * 0.07
+
         # Flatten edge_index for each graph in the batch
         edge_index = edge_index.view(2, -1)  # [2, N*E]
         edge_weight = edge_weight.view(-1)
@@ -282,8 +289,10 @@ class GCNMae(nn.Module):
 
         # get node representations
         # shape: [N, V, D] -> [N, V, end_channel]
-        for conv in self.convs:
+        for i, conv in enumerate(self.convs):
             x = conv(x, edge_index, edge_weight)
+            x = self.conv_norms[i](x)
+
             x = F.relu(x)
             x = self.dropout_module(x)
 
@@ -299,12 +308,23 @@ class GCNMae(nn.Module):
         N, T, V, D = x_shape
         x = self.encoder(data)
 
+        # Flatten edge_index for each graph in the batch
+        edge_index = edge_index.view(2, -1)  # [2, N*E]
+        edge_weight = edge_weight.view(-1)
+
+        # Shift the edge indices to account for batch-wise node indexing
+        batch_offsets = torch.arange(N, device=edge_index.device) * V
+        edge_index[0] += torch.repeat_interleave(batch_offsets, edge_index.size(1) // N)
+        edge_index[1] += torch.repeat_interleave(batch_offsets, edge_index.size(1) // N)
+
         x = F.relu(self.decoder_head(x))
         x = self.decoder_norm(x)
         x = x.view(N * V, D)
-        for conv in self.decoder_convs:
+        for i, conv in enumerate(self.decoder_convs):
             x = conv(x, edge_index, edge_weight)
+            x = self.decoder_conv_norm(x)
             x = F.relu(x)
+
         x = x.contiguous().view(N, V, D)
         return x
 
@@ -312,7 +332,7 @@ class GCNMae(nn.Module):
         pred = self.forward(data)
         y = data['x']
         N, T, V, D = y.shape
-        loss = criterion(pred, y.view(N, -1))
+        loss = criterion(pred, y.view(N, V, D))
         return loss
 
 
