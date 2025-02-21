@@ -273,7 +273,7 @@ class GCNMae(nn.Module):
         # Flatten the batch dimension, so x becomes [N*V, D]
         x = x.view(N * V, D)
 
-        x = torch.randn_like(x, device=x.device) * 0.07
+        x = torch.randn_like(x, device=x.device, dtype=x.dtype) * 0.07
 
         # Flatten edge_index for each graph in the batch
         edge_index = edge_index.view(2, -1)  # [2, N*E]
