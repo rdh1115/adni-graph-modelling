@@ -265,10 +265,26 @@ class GCNMae(nn.Module):
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
+    @staticmethod
+    def prepare_edge_info(x_shape, edge_index, edge_weight):
+        N, T, V, D = x_shape
+        # Flatten edge_index for each graph in the batch
+        edge_index = edge_index.view(2, -1)  # [2, N*E]
+        edge_weight = edge_weight.view(-1)
+
+        # Shift the edge indices to account for batch-wise node indexing
+        batch_offsets = torch.arange(N, device=edge_index.device) * V
+        edge_index[0] += torch.repeat_interleave(batch_offsets, edge_index.size(1) // N)
+        edge_index[1] += torch.repeat_interleave(batch_offsets, edge_index.size(1) // N)
+        return edge_index, edge_weight
+
     def encoder(self, data):
         x, edge_index, edge_weight = data['x'], data['edge_index'], data['edge_attr']
         x_shape = x.shape
         N, T, V, D = x_shape
+
+        if not edge_index.shape[0] == 2:
+            edge_index, edge_weight = self.prepare_edge_info(x_shape, edge_index, edge_weight)
         x = x.view(N * V, D)
         x = x + torch.randn_like(x, device=x.device, dtype=x.dtype) * 0.07
 
@@ -295,28 +311,20 @@ class GCNMae(nn.Module):
         x_shape = x.shape
         N, T, V, D = x_shape
 
-        # Flatten edge_index for each graph in the batch
-        edge_index = edge_index.view(2, -1)  # [2, N*E]
-        edge_weight = edge_weight.view(-1)
-
-        # Shift the edge indices to account for batch-wise node indexing
-        batch_offsets = torch.arange(N, device=edge_index.device) * V
-        edge_index[0] += torch.repeat_interleave(batch_offsets, edge_index.size(1) // N)
-        edge_index[1] += torch.repeat_interleave(batch_offsets, edge_index.size(1) // N)
+        edge_index, edge_weight = self.prepare_edge_info(x_shape, edge_index, edge_weight)
         data['edge_index'], data['edge_attr'] = edge_index, edge_weight
-
 
         x = self.encoder(data)
 
         x = F.relu(self.decoder_head(x))
         x = self.decoder_norm(x)
         x = x.view(N * V, D)
+
         for i, conv in enumerate(self.decoder_convs):
             x = conv(x, edge_index, edge_weight)
             if hasattr(self, 'decoder_conv_norm'):
                 x = self.decoder_conv_norm(x)
             x = F.relu(x)
-
         x = x.contiguous().view(N, V, D)
         return x
 
